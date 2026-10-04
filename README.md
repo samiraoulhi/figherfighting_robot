@@ -199,16 +199,5 @@ Avant le premier essai complet :
 
 ---
 
-## Structure du dépôt
-
-```
-robot_anti_incendie_1capteur/
-└── robot_anti_incendie_1capteur.ino
-README.md
-```
-
----
-
-## Auteure
 
 Samira Oulhi
