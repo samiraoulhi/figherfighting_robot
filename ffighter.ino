@@ -9,8 +9,8 @@
 // ====================== BROCHES ======================
 const int flameSensor = 8;    // capteur de flamme unique, à l'avant
 
-const int ENA = 3, IN1 = 2,  IN2 = 4;     // moteur(s) gauche (ENA = PWM)
-const int ENB = 5, IN3 = A0, IN4 = A1;    // moteur(s) droit  (ENB = PWM)
+const int ENA = 3, IN1 = 2,  IN2 = 4;     // moteurs gauche (ENA = PWM)
+const int ENB = 5, IN3 = A0, IN4 = A1;    // moteurs droit  (ENB = PWM)
 
 const int relayPin = 10;      // module relais -> pompe
 const int servoPin = 9;       // servo de la lance
