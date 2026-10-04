@@ -24,7 +24,7 @@ Robot mobile autonome qui **cherche une flamme, s'en approche et l'éteint avec 
 | Arduino Uno | Cerveau du robot |
 | Capteur de flamme IR (sortie numérique D0) | Détection de la flamme |
 | Driver moteur L298N | Pilotage des moteurs (sens + vitesse PWM) |
-| 2 ou 4 moteurs DC avec roues | Déplacement (direction différentielle) |
+|4 moteurs DC avec roues | Déplacement (direction différentielle) |
 | Module relais 5 V | Commande de la pompe |
 | Mini pompe à eau + tuyau + réservoir | Extinction |
 | Servomoteur (SG90 ou équivalent) | Orientation de la lance |
