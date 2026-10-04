@@ -3,10 +3,10 @@ Ce projet est un robot pompier basé sur Arduino. Il utilise des capteurs de fla
 
 ## Composants  
 
-- Arduino Uno (ou carte compatible)  
+- Arduino Uno  
 - 3 capteurs de flamme  
-- 2 moteurs DC avec un driver de moteur  
-- Pompe à eau  
+- 2 moteurs DC avec un driver de moteur L298N  
+- Pompe à eau  et relais
 - Servo-moteur  
 - Fils de connexion et alimentation électrique  
 
