@@ -115,17 +115,7 @@ Comme il n'y a qu'un capteur, **le robot s'oriente avec son propre corps** : il 
 
 ---
 
-## Installation
 
-1. Installer l'[IDE Arduino](https://www.arduino.cc/en/software).
-2. Placer le fichier dans un dossier du même nom :
-   `robot_anti_incendie_1capteur/robot_anti_incendie_1capteur.ino`
-3. Ouvrir le fichier, choisir la carte **Arduino Uno** et le bon port.
-4. Téléverser.
-
-La bibliothèque `Servo` est fournie avec l'IDE, rien d'autre à installer.
-
----
 
 ## Réglages
 
