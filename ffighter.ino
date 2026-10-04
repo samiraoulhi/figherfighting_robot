@@ -1,4 +1,3 @@
-#include <Wire.h>
 #include <Servo.h>
 
 // Define the pins for the flame sensors, motors, and servo
