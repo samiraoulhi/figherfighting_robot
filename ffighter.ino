@@ -1,14 +1,13 @@
 /*
   Robot anti-incendie - Arduino Uno + L298N + relais + servo
-  2 capteurs de flamme (gauche / droite), machine à 4 états :
+  UN SEUL capteur de flamme (à l'avant), machine à 4 états :
   SEARCH -> APPROACH -> EXTINGUISH -> COOLDOWN_ST
 */
 
 #include <Servo.h>
 
 // ====================== BROCHES ======================
-const int leftSensor  = 12;   // capteur de flamme gauche
-const int rightSensor = 13;   // capteur de flamme droit
+const int flameSensor = 8;    // capteur de flamme unique, à l'avant
 
 const int ENA = 3, IN1 = 2,  IN2 = 4;     // moteur(s) gauche (ENA = PWM)
 const int ENB = 5, IN3 = A0, IN4 = A1;    // moteur(s) droit  (ENB = PWM)
@@ -28,8 +27,8 @@ const unsigned long SWEEP_INTERVAL = 15;            // ms entre deux pas du serv
 const unsigned long MAX_SPRAY    = 8000;   // arrosage max d'affilée (ms)
 const unsigned long COOLDOWN_MS  = 5000;   // pause de sécurité après arrosage max
 const unsigned long APPROACH_MS  = 1500;   // durée d'avance vers la flamme
-const unsigned long SEARCH_TURN  = 150;    // durée d'un pas de rotation (mode recherche)
-const unsigned long SEARCH_PAUSE = 500;    // pause pour "regarder"
+const unsigned long SEARCH_TURN  = 120;    // durée d'un pas de rotation (mode recherche)
+const unsigned long SEARCH_PAUSE = 500;    // pause pour "regarder" (le capteur doit se stabiliser)
 
 // ====================== VARIABLES ======================
 enum State { SEARCH, APPROACH, EXTINGUISH, COOLDOWN_ST };
@@ -40,15 +39,14 @@ int servoAngle = 90, servoStep = 2;
 
 unsigned long lastSweep = 0, sprayStart = 0, cooldownStart = 0, driveStart = 0;
 bool driving = false;
-int  lastDir = 1;            // dernier côté où une flamme a été vue (-1 gauche, 1 droite)
 
 // ====================== FONCTIONS ======================
 
 // Lecture filtrée : 5 lectures, il en faut 4 positives (anti-parasites)
-bool readFlame(int pin) {
+bool readFlame() {
   int count = 0;
   for (int i = 0; i < 5; i++) {
-    if (digitalRead(pin) == FLAME_DETECTED) count++;
+    if (digitalRead(flameSensor) == FLAME_DETECTED) count++;
     delay(1);
   }
   return count >= 4;
@@ -67,7 +65,6 @@ void setMotor(int in1, int in2, int en, int dir) {
 
 void stopRobot() { setMotor(IN1, IN2, ENA, 0);  setMotor(IN3, IN4, ENB, 0); }
 void forward()   { setMotor(IN1, IN2, ENA, 1);  setMotor(IN3, IN4, ENB, 1); }
-void turnLeft()  { setMotor(IN1, IN2, ENA, -1); setMotor(IN3, IN4, ENB, 1); }
 void turnRight() { setMotor(IN1, IN2, ENA, 1);  setMotor(IN3, IN4, ENB, -1); }
 
 // Balayage non bloquant de la lance
@@ -80,25 +77,19 @@ void sweepServo() {
   }
 }
 
-// Mode recherche : un pas de rotation, une pause, et on recommence.
-// Le robot tourne du côté où il a vu la flamme en dernier.
+// Mode recherche : un pas de rotation, une pause, et on recommence
 void searchStep(unsigned long now) {
   static bool turning = true;
   static unsigned long t0 = 0;
   unsigned long dur = turning ? SEARCH_TURN : SEARCH_PAUSE;
   if (now - t0 >= dur) { turning = !turning; t0 = now; }
 
-  if (turning) {
-    if (lastDir < 0) turnLeft(); else turnRight();
-  } else {
-    stopRobot();
-  }
+  if (turning) turnRight(); else stopRobot();
 }
 
 // ====================== SETUP ======================
 void setup() {
-  pinMode(leftSensor, INPUT);
-  pinMode(rightSensor, INPUT);
+  pinMode(flameSensor, INPUT);
 
   pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT); pinMode(ENA, OUTPUT);
   pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT); pinMode(ENB, OUTPUT);
@@ -115,50 +106,36 @@ void setup() {
 
 // ====================== BOUCLE PRINCIPALE ======================
 void loop() {
-  // 1. Lecture des capteurs
-  bool left  = readFlame(leftSensor);
-  bool right = readFlame(rightSensor);
-  bool fire  = left || right;     // au moins un capteur voit une flamme
-  bool front = left && right;     // les deux voient = flamme en face
+  bool fire = readFlame();        // le capteur voit-il une flamme ?
   unsigned long now = millis();
 
-  // 2. On mémorise le côté de la flamme
-  if (left && !right) lastDir = -1;
-  else if (right && !left) lastDir = 1;
-
-  // 3. Machine à états
   switch (state) {
 
-    case SEARCH:                              // je cherche
+    case SEARCH:                              // je cherche en tournant
       setPump(false);
       myservo.write(90);
       if (fire) { stopRobot(); driving = false; state = APPROACH; break; }
       searchStep(now);
       break;
 
-    case APPROACH:                            // je m'oriente puis j'avance
+    case APPROACH:                            // la flamme est en face : j'avance
       setPump(false);
       myservo.write(90);
       if (!fire) { driving = false; stopRobot(); state = SEARCH; break; }
 
-      if (front) {
-        if (!driving) { driving = true; driveStart = now; }
-        forward();
-        if (now - driveStart >= APPROACH_MS) {
-          driving = false;
-          stopRobot();
-          sprayStart = now;
-          state = EXTINGUISH;
-        }
-      } else {
+      if (!driving) { driving = true; driveStart = now; }
+      forward();
+      if (now - driveStart >= APPROACH_MS) {
         driving = false;
-        if (left) turnLeft(); else turnRight();
+        stopRobot();
+        sprayStart = now;
+        state = EXTINGUISH;
       }
       break;
 
     case EXTINGUISH:                          // j'arrose
       stopRobot();
-      if (!fire) {                            // flamme éteinte
+      if (!fire) {                            // flamme éteinte (ou perdue)
         setPump(false);
         myservo.write(90);
         state = SEARCH;
