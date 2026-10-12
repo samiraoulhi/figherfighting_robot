@@ -1,193 +1,125 @@
-# Robot anti-incendie autonome (Arduino)
+# 🔥 Robot anti-incendie Arduino
 
-Robot mobile autonome qui **cherche une flamme, s'en approche et l'éteint avec une pompe à eau**. Le comportement est géré par une machine à états non bloquante, avec un seul capteur de flamme.
+Robot mobile autonome capable de **détecter une flamme**, **s'orienter vers elle**, **s'arrêter à bonne distance** puis **l'éteindre avec un jet d'eau** balayé de gauche à droite par un servomoteur.
 
-> Projet réalisé avec Arduino Uno, un driver moteur L298N, un module relais, un servomoteur et un capteur de flamme infrarouge.
+## Fonctionnement en bref
 
----
-
-## Fonctionnalités
-
-- Recherche de flamme par **pivot sur place** (rotation par petits pas)
-- Approche automatique de la flamme
-- Extinction par **pompe à eau** commandée par relais, avec **lance orientable** (balayage du servo)
-- **Sécurités** : durée d'arrosage limitée (8 s) puis pause (5 s), pompe coupée au démarrage
-- **Filtre anti-parasites** sur la lecture du capteur (4 lectures positives sur 5)
-- Code **non bloquant** (`millis()`) : le robot reste réactif en permanence
-
----
+1. Trois capteurs de flamme analogiques (gauche, centre, droite) mesurent l'intensité infrarouge.
+2. Plus la valeur lue est **basse**, plus la flamme est **forte / proche**.
+3. Le robot tourne vers le capteur le plus fort, puis avance par petits pas.
+4. Quand une valeur passe sous le seuil d'arrêt, le robot s'immobilise et lance l'arrosage.
+5. S'il n'y a plus de flamme, il reste à l'arrêt, pompe coupée.
 
 ## Matériel
 
 | Composant | Rôle |
 |---|---|
-| Arduino Uno | Cerveau du robot |
-| Capteur de flamme IR (sortie numérique D0) | Détection de la flamme |
-| Driver moteur L298N | Pilotage des moteurs (sens + vitesse PWM) |
-|4 moteurs DC avec roues | Déplacement (direction différentielle) |
-| Module relais 5 V | Commande de la pompe |
-| Mini pompe à eau + tuyau + réservoir | Extinction |
-| Servomoteur (SG90 ou équivalent) | Orientation de la lance |
-| Batterie 7 à 12 V | Alimentation de puissance |
-| Diode 1N4007 | Protection du relais (sur la pompe) |
-| Châssis, fils, plaque d'essai | Montage |
-
----
+| Arduino Uno (ou compatible) | Cerveau du robot |
+| Driver moteur L298N | Pilotage des moteurs (2 canaux : gauche / droite) |
+| Moteurs DC + roues | Déplacement (type char : virage sur place) |
+| 3 capteurs de flamme analogiques | Détection de la direction et de la distance |
+| Servomoteur | Oriente la buse de la pompe |
+| Module relais | Commande de la pompe à eau |
+| Pompe à eau + tuyau | Extinction |
+| Alimentation séparée pour moteurs/pompe | Évite les chutes de tension sur l'Arduino |
 
 ## Câblage
 
-### Capteur de flamme
+### Moteurs (L298N)
 
-| Capteur | Arduino |
+| Signal | Broche Arduino | Remarque |
+|---|---|---|
+| IN1 | 10 | Moteur droit, sens 1 |
+| IN2 | 9 | Moteur droit, sens 2 |
+| IN3 | 8 | Moteur gauche, sens 1 |
+| IN4 | 7 | Moteur gauche, sens 2 |
+| ENA | 11 (PWM) | Vitesse moteur droit |
+| ENB | 6 (PWM) | Vitesse moteur gauche |
+
+### Capteurs de flamme
+
+| Capteur | Broche |
 |---|---|
-| VCC | 5V |
-| GND | GND |
-| OUT (D0) | **D8** |
+| Gauche | A0 |
+| Centre | A1 |
+| Droite | A2 |
 
-### Driver moteur L298N
+### Extinction
 
-| L298N | Branché sur |
+| Élément | Broche |
 |---|---|
-| IN1 | D2 |
-| IN2 | D4 |
-| ENA | D3 (PWM) |
-| IN3 | A0 |
-| IN4 | A1 |
-| ENB | D5 (PWM) |
-| OUT1 / OUT2 | Moteur(s) gauche |
-| OUT3 / OUT4 | Moteur(s) droit |
-| 12V | Batterie + |
-| GND | GND commun (batterie − et Arduino) |
+| Servomoteur (signal) | 5 |
+| Relais (pompe) | 4 |
 
-> Retirer les jumpers **ENA** et **ENB** pour que le PWM fonctionne. Garder le jumper du régulateur 5 V.
-> Avec 4 roues, brancher les deux moteurs d'un même côté **en parallèle** sur la même paire de sorties.
+> ⚠️ Relier **toutes les masses (GND)** ensemble : Arduino, L298N, alimentation, relais, capteurs.
 
-### Module relais et pompe
+## Logique de décision
 
-| Relais | Branché sur |
-|---|---|
-| IN | D10 |
-| VCC | 5V |
-| GND | GND |
-| COM | Batterie + |
-| NO | Pompe + |
-
-Le **−** de la pompe va directement au **−** de la batterie. Placer une diode **1N4007** en parallèle sur la pompe (bande côté +).
-
-### Servomoteur
-
-| Servo | Branché sur |
-|---|---|
-| Signal | D9 |
-| Rouge (+) | Borne 5V du L298N |
-| Marron / noir (−) | GND commun |
-
-### Masse commune
-
-Tous les GND (batterie, L298N, Arduino, relais, capteur, servo, pompe) doivent être reliés ensemble.
-
----
-
-## Fonctionnement
-
-Le robot est une **machine à états** à 4 états :
-
-```mermaid
-stateDiagram-v2
-    [*] --> SEARCH
-    SEARCH --> APPROACH: flamme détectée
-    APPROACH --> SEARCH: flamme perdue
-    APPROACH --> EXTINGUISH: après 1,5 s d'avance
-    EXTINGUISH --> SEARCH: flamme éteinte
-    EXTINGUISH --> COOLDOWN_ST: 8 s écoulées
-    COOLDOWN_ST --> APPROACH: flamme toujours présente
-    COOLDOWN_ST --> SEARCH: plus de flamme
+```
+Lecture des 3 capteurs
+        │
+        ├── tous > 850 ───────────────► AUCUN FEU : arrêt, pompe OFF
+        │
+        ├── au moins un ≤ 600 ────────► FEU PROCHE : arrêt + arrosage
+        │
+        └── sinon (entre 600 et 850) ─► FEU LOINTAIN : on s'oriente
+                 ├── gauche la plus basse ─► pivot à gauche (200 ms)
+                 ├── droite la plus basse ─► pivot à droite (200 ms)
+                 └── centre le plus bas ───► avance (200 ms)
 ```
 
-| État | Action |
+Le robot avance **par impulsions** (mouvement 200 ms, pause 150 ms) pour relire les capteurs régulièrement.
+
+## Paramètres réglables
+
+| Paramètre | Valeur | Effet |
+|---|---|---|
+| `FIRE_DETECT` | 850 | En dessous : une flamme est détectée |
+| `FIRE_STOP` | 600 | En dessous : flamme assez proche, on arrose |
+| `speedLeft` / `speedRight` | 140 (0–255) | Vitesse des moteurs |
+| `moveTime` | 200 ms | Durée de chaque impulsion de mouvement |
+| `servoLeft/Center/Right` | 50° / 90° / 130° | Positions du balayage |
+| `RELAY_ON` / `RELAY_OFF` | HIGH / LOW | À inverser si le relais est actif à LOW |
+
+### Calibration des capteurs
+
+Valeurs mesurées avec ce montage (moniteur série, 9600 bauds) :
+
+| Situation | Valeur approximative |
 |---|---|
-| `SEARCH` | Pivote par pas de 120 ms avec pauses de 500 ms pour laisser le capteur « regarder » |
-| `APPROACH` | La flamme est devant : le robot avance pendant 1,5 s |
-| `EXTINGUISH` | Moteurs arrêtés, pompe active, servo qui balaie entre 60° et 120° |
-| `COOLDOWN_ST` | Pompe coupée pendant 5 s pour protéger le matériel |
+| Pas de flamme | ~915 |
+| Flamme lointaine | ~800 |
+| Flamme proche | ~300–400 |
 
-Comme il n'y a qu'un capteur, **le robot s'oriente avec son propre corps** : il tourne jusqu'à voir la flamme, qui est alors forcément devant lui.
+Les valeurs dépendent de la lumière ambiante, du capteur et de la flamme : **recalibrez** `FIRE_DETECT` et `FIRE_STOP` dans votre environnement.
 
----
+## Installation
 
+1. Installer l'[Arduino IDE](https://www.arduino.cc/en/software).
+2. La bibliothèque `Servo` est incluse par défaut.
+3. Câbler selon les tableaux ci-dessus.
+4. Ouvrir le fichier `.ino`, choisir la carte (Arduino Uno) et le port, puis téléverser.
+5. Ouvrir le moniteur série (9600 bauds) pour voir les valeurs `Left / Center / Right` et les messages d'état.
 
+## Séquence d'arrosage
 
-## Réglages
+1. Arrêt des moteurs.
+2. Pompe ON.
+3. 3 allers-retours du servo (gauche ↔ droite).
+4. Retour au centre.
+5. Pompe OFF.
 
-Les paramètres se trouvent en haut du fichier :
+## Limites connues et améliorations possibles
 
-| Constante | Valeur | Rôle |
-|---|---|---|
-| `FLAME_DETECTED` | `HIGH` | Niveau de sortie du capteur quand il voit une flamme (`LOW` sur certains modules) |
-| `RELAY_ACTIVE_LOW` | `true` | `false` si la pompe démarre à l'envers |
-| `SPEED` | `200` | Vitesse des moteurs (0 à 255) |
-| `SEARCH_TURN` | `120` ms | Durée d'un pas de rotation |
-| `SEARCH_PAUSE` | `500` ms | Pause entre deux pas |
-| `APPROACH_MS` | `1500` ms | Durée d'avance vers la flamme |
-| `MAX_SPRAY` | `8000` ms | Arrosage maximum d'affilée |
-| `COOLDOWN_MS` | `5000` ms | Pause de sécurité |
-| `SWEEP_MIN` / `SWEEP_MAX` | `60` / `120` | Angles du balayage de la lance |
-
----
-
-## Tests et calibration
-
-Avant le premier essai complet :
-
-1. **Capteur** : lire les valeurs avec le moniteur série (sans flamme, puis avec une flamme) pour confirmer `FLAME_DETECTED`.
-2. **Moteurs** : roues en l'air, vérifier que les deux côtés tournent dans le bon sens.
-3. **Pivot** : poser le robot au sol, il doit tourner **sur place** (par à-coups) sans avancer.
-4. **Pompe** : tester à vide ou avec un petit récipient, loin de l'électronique.
-5. **Capteur de flamme** : régler le potentiomètre du module pour une détection à environ 30-50 cm.
-
----
-
-## Problèmes rencontrés et solutions
-
-| Problème | Cause | Solution |
-|---|---|---|
-| Le robot tournait sans jamais s'arrêter | Logique du capteur inversée (`LOW` au lieu de `HIGH`) | Constante `FLAME_DETECTED` réglable |
-| Le robot ne s'approchait jamais de la flamme | Première version : orientation sans phase d'avance | Ajout de l'état `APPROACH` avec avance temporisée |
-| Robot bloqué pendant l'arrosage | `delay()` bloquant | Passage à `millis()` et à une machine à états |
-| Risque de griller l'Arduino | Pompe branchée sur une broche (≈ 20 mA max) | Relais avec alimentation séparée |
-| Pivot difficile à 4 roues | Frottement au sol | Vitesse plus élevée, pas de rotation plus long |
-
----
-
-## Limites
-
-- Pas de **mesure de distance** : l'avance dure un temps fixe.
-- Recherche plus lente et moins précise qu'avec plusieurs capteurs.
-- Capteur sensible à la **lumière du soleil** et aux lampes (usage intérieur recommandé).
-- Pas d'**évitement d'obstacles**.
-- Autonomie limitée par la batterie et le réservoir.
-
----
-
-## Améliorations possibles
-
-- Capteur **ultrason** (HC-SR04) pour mesurer la distance et éviter les obstacles
-- Capteur de flamme **analogique** pour estimer l'intensité de la flamme
-- Capteur de **fumée / température** (MQ-2, DHT22) pour confirmer l'incendie
-- Passage sur **ESP32** avec alerte Wi-Fi (Telegram, e-mail)
-- **Encodeurs** sur les roues pour contrôler la rotation et la distance
-- **Bouton d'arrêt d'urgence** coupant moteurs et pompe
-- Version à **2 ou 3 capteurs** pour une orientation directe vers la flamme
-
----
+- **Égalité de valeurs** : si deux capteurs lisent exactement la même valeur la plus basse, aucune direction n'est choisie et le robot s'arrête une itération.
+- **Bruit des capteurs** : une seule lecture par cycle ; faire une moyenne de plusieurs lectures stabiliserait le comportement.
+- **Pas de recherche active** : sans flamme, le robot reste immobile (pas de balayage de la zone).
+- **Variable `sprayDelay` non utilisée** dans le code actuel.
+- **Messages série répétés** (`PUMP OFF` à chaque cycle sans feu) : à limiter si on veut un moniteur plus lisible.
+- **Pas de limite de temps d'arrosage** si la flamme persiste (risque de vider le réservoir) : ajouter un compteur.
+- **Pas d'évitement d'obstacles**.
 
 ## Sécurité
 
-- Toujours tester avec une **petite flamme** (bougie), dans un endroit dégagé, avec un **extincteur** à portée.
-- Ne jamais laisser le robot fonctionner sans surveillance.
-- Garder l'eau à l'écart de l'électronique et vérifier l'absence de court-circuit avant de brancher la batterie.
+Projet pédagogique. Tester avec une petite flamme (bougie) dans un espace dégagé, loin de tout matériau inflammable, avec un extincteur à proximité. Ne jamais laisser le robot sans surveillance.
 
----
-
-
-Samira Oulhi
