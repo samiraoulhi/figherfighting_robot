@@ -1,160 +1,336 @@
-/*
-  Robot anti-incendie - Arduino Uno + L298N + relais + servo
-  UN SEUL capteur de flamme (à l'avant), machine à 4 états :
-  SEARCH -> APPROACH -> EXTINGUISH -> COOLDOWN_ST
-*/
-
 #include <Servo.h>
 
-// ====================== BROCHES ======================
-const int flameSensor = 8;    // capteur de flamme unique, à l'avant
+// ================= MOTOR PINS =================
+#define IN1 10
+#define IN2 9
+#define IN3 8
+#define IN4 7
 
-const int ENA = 3, IN1 = 2,  IN2 = 4;     // moteurs gauche (ENA = PWM)
-const int ENB = 5, IN3 = A0, IN4 = A1;    // moteurs droit  (ENB = PWM)
+#define ENA 11
+#define ENB 6
 
-const int relayPin = 10;      // module relais -> pompe
-const int servoPin = 9;       // servo de la lance
+// ================= FLAME SENSORS =================
+#define FLAME_LEFT   A0
+#define FLAME_CENTER A1
+#define FLAME_RIGHT  A2
 
-// ====================== RÉGLAGES ======================
-const bool FLAME_DETECTED   = HIGH;   // tes capteurs sortent HIGH sur une flamme
-const bool RELAY_ACTIVE_LOW = true;   // mettre false si la pompe démarre à l'envers
+// ================= SERVO & RELAY =================
+#define SERVO_PIN 5
+#define RELAY_PIN 4
 
-const int SPEED = 200;                // vitesse PWM (0-255)
+// ================= SETTINGS =================
 
-const int SWEEP_MIN = 60, SWEEP_MAX = 120;          // angles du balayage servo
-const unsigned long SWEEP_INTERVAL = 15;            // ms entre deux pas du servo
+// Your sensor readings:
+// No fire       = around 915
+// Fire far      = around 800
+// Fire close    = around 300-400
+// Stop point    = 600
 
-const unsigned long MAX_SPRAY    = 8000;   // arrosage max d'affilée (ms)
-const unsigned long COOLDOWN_MS  = 5000;   // pause de sécurité après arrosage max
-const unsigned long APPROACH_MS  = 1500;   // durée d'avance vers la flamme
-const unsigned long SEARCH_TURN  = 120;    // durée d'un pas de rotation (mode recherche)
-const unsigned long SEARCH_PAUSE = 500;    // pause pour "regarder" (le capteur doit se stabiliser)
+#define FIRE_DETECT 850
+#define FIRE_STOP   600
 
-// ====================== VARIABLES ======================
-enum State { SEARCH, APPROACH, EXTINGUISH, COOLDOWN_ST };
-State state = SEARCH;
+// Motor speed
+int speedLeft = 140;
+int speedRight = 140;
 
-Servo myservo;
-int servoAngle = 90, servoStep = 2;
+// Short movement time
+int moveTime = 200;
 
-unsigned long lastSweep = 0, sprayStart = 0, cooldownStart = 0, driveStart = 0;
-bool driving = false;
+// Servo positions
+int servoLeft   = 50;
+int servoCenter = 90;
+int servoRight  = 130;
 
-// ====================== FONCTIONS ======================
+// Pump spray time at each servo position
+int sprayDelay = 700;
 
-// Lecture filtrée : 5 lectures, il en faut 4 positives (anti-parasites)
-bool readFlame() {
-  int count = 0;
-  for (int i = 0; i < 5; i++) {
-    if (digitalRead(flameSensor) == FLAME_DETECTED) count++;
-    delay(1);
-  }
-  return count >= 4;
-}
+// Change this if your relay works opposite
+// HIGH = relay ON
+// LOW  = relay OFF
+#define RELAY_ON  HIGH
+#define RELAY_OFF LOW
 
-void setPump(bool on) {
-  digitalWrite(relayPin, (on != RELAY_ACTIVE_LOW) ? HIGH : LOW);
-}
+Servo fireServo;
 
-// dir : 1 = avant, -1 = arrière, 0 = arrêt
-void setMotor(int in1, int in2, int en, int dir) {
-  digitalWrite(in1, dir > 0);
-  digitalWrite(in2, dir < 0);
-  analogWrite(en, dir == 0 ? 0 : SPEED);
-}
 
-void stopRobot() { setMotor(IN1, IN2, ENA, 0);  setMotor(IN3, IN4, ENB, 0); }
-void forward()   { setMotor(IN1, IN2, ENA, 1);  setMotor(IN3, IN4, ENB, 1); }
-void turnRight() { setMotor(IN1, IN2, ENA, 1);  setMotor(IN3, IN4, ENB, -1); }
+// ================= SETUP =================
 
-// Balayage non bloquant de la lance
-void sweepServo() {
-  if (millis() - lastSweep >= SWEEP_INTERVAL) {
-    lastSweep = millis();
-    servoAngle += servoStep;
-    if (servoAngle >= SWEEP_MAX || servoAngle <= SWEEP_MIN) servoStep = -servoStep;
-    myservo.write(servoAngle);
-  }
-}
-
-// Mode recherche : un pas de rotation, une pause, et on recommence
-void searchStep(unsigned long now) {
-  static bool turning = true;
-  static unsigned long t0 = 0;
-  unsigned long dur = turning ? SEARCH_TURN : SEARCH_PAUSE;
-  if (now - t0 >= dur) { turning = !turning; t0 = now; }
-
-  if (turning) turnRight(); else stopRobot();
-}
-
-// ====================== SETUP ======================
 void setup() {
-  pinMode(flameSensor, INPUT);
 
-  pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT); pinMode(ENA, OUTPUT);
-  pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT); pinMode(ENB, OUTPUT);
+  Serial.begin(9600);
 
-  pinMode(relayPin, OUTPUT);
-  setPump(false);                 // pompe éteinte dès le démarrage
+  // Motor pins
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT);
+  pinMode(IN4, OUTPUT);
 
-  myservo.attach(servoPin);
-  myservo.write(90);
-  stopRobot();
+  pinMode(ENA, OUTPUT);
+  pinMode(ENB, OUTPUT);
 
-  delay(2000);                    // temps de poser le robot avant qu'il bouge
+  // Relay
+  pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, RELAY_OFF);
+
+  // Servo
+  fireServo.attach(SERVO_PIN);
+  fireServo.write(servoCenter);
+
+  stopCar();
+
+  delay(2000);
+
+  Serial.println("Fire Fighter Robot Ready");
 }
 
-// ====================== BOUCLE PRINCIPALE ======================
+
+// ================= MAIN LOOP =================
+
 void loop() {
-  bool fire = readFlame();        // le capteur voit-il une flamme ?
-  unsigned long now = millis();
 
-  switch (state) {
+  // Read flame sensors
+  int leftValue   = analogRead(FLAME_LEFT);
+  int centerValue = analogRead(FLAME_CENTER);
+  int rightValue  = analogRead(FLAME_RIGHT);
 
-    case SEARCH:                              // je cherche en tournant
-      setPump(false);
-      myservo.write(90);
-      if (fire) { stopRobot(); driving = false; state = APPROACH; break; }
-      searchStep(now);
-      break;
+  // Show values
+  Serial.print("Left: ");
+  Serial.print(leftValue);
 
-    case APPROACH:                            // la flamme est en face : j'avance
-      setPump(false);
-      myservo.write(90);
-      if (!fire) { driving = false; stopRobot(); state = SEARCH; break; }
+  Serial.print("   Center: ");
+  Serial.print(centerValue);
 
-      if (!driving) { driving = true; driveStart = now; }
-      forward();
-      if (now - driveStart >= APPROACH_MS) {
-        driving = false;
-        stopRobot();
-        sprayStart = now;
-        state = EXTINGUISH;
-      }
-      break;
+  Serial.print("   Right: ");
+  Serial.println(rightValue);
 
-    case EXTINGUISH:                          // j'arrose
-      stopRobot();
-      if (!fire) {                            // flamme éteinte (ou perdue)
-        setPump(false);
-        myservo.write(90);
-        state = SEARCH;
-        break;
-      }
-      setPump(true);
-      sweepServo();
-      if (now - sprayStart >= MAX_SPRAY) {    // sécurité : arrosage trop long
-        setPump(false);
-        myservo.write(90);
-        cooldownStart = now;
-        state = COOLDOWN_ST;
-      }
-      break;
 
-    case COOLDOWN_ST:                         // pause de sécurité
-      stopRobot();
-      setPump(false);
-      if (now - cooldownStart >= COOLDOWN_MS) state = fire ? APPROACH : SEARCH;
-      break;
+  // ==========================================
+  // NO FIRE
+  // ==========================================
+
+  if (leftValue > FIRE_DETECT &&
+      centerValue > FIRE_DETECT &&
+      rightValue > FIRE_DETECT) {
+
+    stopCar();
+    pumpOff();
+
+    delay(100);
+
+    return;
   }
+
+
+  // ==========================================
+  // FIRE IS CLOSE
+  // 600 OR LOWER = STOP
+  // ==========================================
+
+  if (leftValue <= FIRE_STOP ||
+      centerValue <= FIRE_STOP ||
+      rightValue <= FIRE_STOP) {
+
+    stopCar();
+
+    Serial.println("FIRE CLOSE - STOPPING");
+
+    sprayWater();
+
+    delay(300);
+
+    return;
+  }
+
+
+  // ==========================================
+  // FIRE DETECTED - FIND DIRECTION
+  // LOWER VALUE = STRONGER FLAME
+  // ==========================================
+
+  // LEFT is strongest
+  if (leftValue < centerValue &&
+      leftValue < rightValue &&
+      leftValue < FIRE_DETECT) {
+
+    Serial.println("Fire LEFT");
+
+    turnLeft();
+
+    delay(moveTime);
+
+    stopCar();
+
+    delay(150);
+
+    return;
+  }
+
+
+  // RIGHT is strongest
+  if (rightValue < leftValue &&
+      rightValue < centerValue &&
+      rightValue < FIRE_DETECT) {
+
+    Serial.println("Fire RIGHT");
+
+    turnRight();
+
+    delay(moveTime);
+
+    stopCar();
+
+    delay(150);
+
+    return;
+  }
+
+
+  // CENTER is strongest
+  if (centerValue < leftValue &&
+      centerValue < rightValue &&
+      centerValue < FIRE_DETECT) {
+
+    Serial.println("Fire CENTER");
+
+    forward();
+
+    delay(moveTime);
+
+    stopCar();
+
+    delay(150);
+
+    return;
+  }
+
+
+  // Safety
+  stopCar();
+
+  delay(100);
+}
+
+
+// =================================================
+// MOTOR FUNCTIONS
+// =================================================
+
+void forward() {
+
+  analogWrite(ENA, speedRight);
+  analogWrite(ENB, speedLeft);
+
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+}
+
+
+void backward() {
+
+  analogWrite(ENA, speedRight);
+  analogWrite(ENB, speedLeft);
+
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
+
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+}
+
+
+void turnRight() {
+
+  analogWrite(ENA, speedRight);
+  analogWrite(ENB, speedLeft);
+
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
+
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+}
+
+
+void turnLeft() {
+
+  analogWrite(ENA, speedRight);
+  analogWrite(ENB, speedLeft);
+
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+}
+
+
+void stopCar() {
+
+  analogWrite(ENA, 0);
+  analogWrite(ENB, 0);
+
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, LOW);
+
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, LOW);
+}
+
+
+// =================================================
+// PUMP / RELAY
+// =================================================
+
+void pumpOn() {
+
+  digitalWrite(RELAY_PIN, RELAY_ON);
+
+  Serial.println("PUMP ON");
+}
+
+
+void pumpOff() {
+
+  digitalWrite(RELAY_PIN, RELAY_OFF);
+
+  Serial.println("PUMP OFF");
+}
+
+
+// =================================================
+// WATER SPRAY
+// =================================================
+
+void sprayWater() {
+
+  Serial.println("START SPRAYING");
+
+  stopCar();
+
+  // Pump ON
+  pumpOn();
+
+  // Quick left-right sweep
+  for (int i = 0; i < 3; i++) {
+
+    fireServo.write(servoLeft);
+    delay(150);
+
+    fireServo.write(servoRight);
+    delay(150);
+  }
+
+  // Return to center
+  fireServo.write(servoCenter);
+  delay(100);
+
+  // Pump OFF
+  pumpOff();
+
+  Serial.println("SPRAY COMPLETE");
+
+  delay(500);
 }
