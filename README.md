@@ -114,7 +114,6 @@ Les valeurs dépendent de la lumière ambiante, du capteur et de la flamme : **r
 - **Égalité de valeurs** : si deux capteurs lisent exactement la même valeur la plus basse, aucune direction n'est choisie et le robot s'arrête une itération.
 - **Bruit des capteurs** : une seule lecture par cycle ; faire une moyenne de plusieurs lectures stabiliserait le comportement.
 - **Pas de recherche active** : sans flamme, le robot reste immobile (pas de balayage de la zone).
-- **Variable `sprayDelay` non utilisée** dans le code actuel.
 - **Messages série répétés** (`PUMP OFF` à chaque cycle sans feu) : à limiter si on veut un moniteur plus lisible.
 - **Pas de limite de temps d'arrosage** si la flamme persiste (risque de vider le réservoir) : ajouter un compteur.
 - **Pas d'évitement d'obstacles**.
